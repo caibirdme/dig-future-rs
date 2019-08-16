@@ -38,5 +38,10 @@ where
 fn main() {
     //let my_future = MyFuture::default();
     //("output {}", run(AddOneFuture(my_future)));
-    println!("ready {}", block_on(ready(10).map(|v| v+1)));
+    println!("ready {}", block_on(ready(10)
+        .then(|v| ready(v-3))
+        .map(|v| v+5)
+        .then(|v| ready(v*2)
+        .map(|v| v/4)
+    )));
 }

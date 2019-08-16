@@ -52,6 +52,40 @@ pub mod future {
                 f: Some(f),
             }
         }
+        fn then<Fut,F>(self, f: F) -> Then<Self, F>
+        where
+            F: FnOnce(Self::Output) -> Fut,
+            Fut: Future,
+            Self: Sized,
+        {
+            Then{
+                fut: self,
+                f: Some(f),
+            }
+        }
+    }
+
+    pub struct Then<Fut,F> {
+        fut: Fut,
+        f: Option<F>,
+    }
+
+    impl<Fut,NextFut,F> Future for Then<Fut,F>
+    where
+        Fut: Future,
+        NextFut: Future,
+        F: FnOnce(Fut::Output) -> NextFut,
+    {
+        type Output = NextFut::Output;
+        fn poll(&mut self, ctx: &Context) -> Poll<Self::Output> {
+            match self.fut.poll(ctx) {
+                Poll::Ready(v) => {
+                    let f = self.f.take().unwrap();
+                    f(v).poll(ctx)
+                },
+                _ => Poll::Pending,
+            }
+        }
     }
 
     pub struct Map<Fut,F> {
