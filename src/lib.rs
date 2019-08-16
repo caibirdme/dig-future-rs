@@ -11,9 +11,7 @@ pub mod task {
 
     impl<'a> Context<'a> {
         pub fn from_waker(waker: &'a Waker) -> Self {
-            Self {
-                waker,
-            }
+            Self { waker }
         }
 
         pub fn waker(&self) -> &'a Waker {
@@ -42,35 +40,35 @@ pub mod future {
     pub trait Future {
         type Output;
         fn poll(&mut self, ctx: &Context) -> Poll<Self::Output>;
-        fn map<U,F>(self, f: F) -> Map<Self, F>
+        fn map<U, F>(self, f: F) -> Map<Self, F>
         where
             F: FnOnce(Self::Output) -> U,
             Self: Sized,
         {
-            Map{
+            Map {
                 fut: self,
                 f: Some(f),
             }
         }
-        fn then<Fut,F>(self, f: F) -> Then<Self, F>
+        fn then<Fut, F>(self, f: F) -> Then<Self, F>
         where
             F: FnOnce(Self::Output) -> Fut,
             Fut: Future,
             Self: Sized,
         {
-            Then{
+            Then {
                 fut: self,
                 f: Some(f),
             }
         }
     }
 
-    pub struct Then<Fut,F> {
+    pub struct Then<Fut, F> {
         fut: Fut,
         f: Option<F>,
     }
 
-    impl<Fut,NextFut,F> Future for Then<Fut,F>
+    impl<Fut, NextFut, F> Future for Then<Fut, F>
     where
         Fut: Future,
         NextFut: Future,
@@ -82,18 +80,18 @@ pub mod future {
                 Poll::Ready(v) => {
                     let f = self.f.take().unwrap();
                     f(v).poll(ctx)
-                },
+                }
                 _ => Poll::Pending,
             }
         }
     }
 
-    pub struct Map<Fut,F> {
+    pub struct Map<Fut, F> {
         fut: Fut,
         f: Option<F>,
     }
 
-    impl<Fut,F,T> Future for Map<Fut,F>
+    impl<Fut, F, T> Future for Map<Fut, F>
     where
         Fut: Future,
         F: FnOnce(Fut::Output) -> T,
@@ -104,24 +102,22 @@ pub mod future {
                 Poll::Ready(v) => {
                     let cb = self.f.take().unwrap();
                     Poll::Ready(cb(v))
-                },
+                }
                 _ => Poll::Pending,
             }
         }
     }
 
     pub fn block_on<F>(mut f: F) -> F::Output
-        where
-            F: Future
+    where
+        F: Future,
     {
-        NOTIFY.with(|v| {
-            loop {
-                if *v.borrow() {
-                    *v.borrow_mut() = false;
-                    let ctx = Context::from_waker(&Waker);
-                    if let Poll::Ready(r) = f.poll(&ctx) {
-                        return r;
-                    }
+        NOTIFY.with(|v| loop {
+            if *v.borrow() {
+                *v.borrow_mut() = false;
+                let ctx = Context::from_waker(&Waker);
+                if let Poll::Ready(r) = f.poll(&ctx) {
+                    return r;
                 }
             }
         })
@@ -138,5 +134,57 @@ pub mod future {
 
     pub fn ready<T>(v: T) -> Ready<T> {
         Ready(v)
+    }
+
+    pub trait TryFuture {
+        type OK;
+        type Error;
+        fn try_poll(&mut self, ctx: &Context) -> Poll<Result<Self::OK, Self::Error>>;
+        fn and_then<Fut, F>(self, f: F) -> AndThen<Self, F>
+        where
+            Fut: Future,
+            F: FnOnce(Self::OK) -> Fut,
+            Self: Sized,
+        {
+            AndThen {
+                fut: self,
+                f: Some(f),
+            }
+        }
+    }
+
+    impl<F, T, E> TryFuture for F
+    where
+        F: Future<Output = Result<T, E>>,
+    {
+        type OK = T;
+        type Error = E;
+        fn try_poll(&mut self, ctx: &Context) -> Poll<Result<Self::OK, Self::Error>> {
+            self.poll(ctx)
+        }
+    }
+
+    pub struct AndThen<Fut, F> {
+        fut: Fut,
+        f: Option<F>,
+    }
+
+    impl<Fut, NextFut, F> Future for AndThen<Fut, F>
+    where
+        Fut: TryFuture,
+        NextFut: TryFuture<Error = Fut::Error>,
+        F: FnOnce(Fut::OK) -> NextFut,
+    {
+        type Output = Result<NextFut::OK, NextFut::Error>;
+        fn poll(&mut self, ctx: &Context) -> Poll<Self::Output> {
+            match self.fut.try_poll(ctx) {
+                Poll::Ready(Ok(v)) => {
+                    let f = self.f.take().unwrap();
+                    f(v).try_poll(ctx)
+                }
+                Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                _ => Poll::Pending,
+            }
+        }
     }
 }
