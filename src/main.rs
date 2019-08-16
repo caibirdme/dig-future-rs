@@ -44,13 +44,13 @@ fn main() {
             ready(10)
                 .then(|v| ready(v - 3))
                 .map(|v| v + 5)
-                .then(|v| ready(v * 2))
+                .then(|v| AddOneFuture(ready(v * 2)))
                 .map(|v| v / 4)
                 .then(|v| {
                     let q: Result<i32, ()> = Ok(v);
                     ready(q)
                 })
-                .and_then(|v| ready(Ok(v + 1)))
+                .and_then(|v| ready(Ok(v)))
         )
     );
 }
